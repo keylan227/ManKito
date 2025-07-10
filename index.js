@@ -13,7 +13,7 @@ const client = new Client({
     partials: [Partials.Channel]
 });
 
-const prefix = ">";
+const prefix = "-";
 
 client.once(Events.ClientReady, () => {
     console.log(`✅ Bot conectado como ${client.user.tag}`);
