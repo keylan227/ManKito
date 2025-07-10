@@ -1,120 +1,203 @@
 import 'dotenv/config';
-import { Client, GatewayIntentBits, Partials, Events } from 'discord.js';
-import { joinVoiceChannel } from '@discordjs/voice';
+import { Client, GatewayIntentBits, Partials, Events, PermissionFlagsBits } from 'discord.js';
+import { joinVoiceChannel, getVoiceConnection } from '@discordjs/voice';
 
 const client = new Client({
-  intents: [
-    GatewayIntentBits.Guilds,
-    GatewayIntentBits.GuildMessages,
-    GatewayIntentBits.MessageContent,
-    GatewayIntentBits.GuildVoiceStates,
-    GatewayIntentBits.GuildMembers
-  ],
-  partials: [Partials.Channel]
+    intents: [
+        GatewayIntentBits.Guilds,
+        GatewayIntentBits.GuildVoiceStates,
+        GatewayIntentBits.GuildMessages,
+        GatewayIntentBits.MessageContent,
+        GatewayIntentBits.GuildMembers
+    ],
+    partials: [Partials.Channel]
 });
 
-function validacionBasica(interaction) {
-  if (!interaction.guild) return "❌ Este comando no está disponible por mensaje directo.";
-  if (!interaction.member.permissions.has("Administrator")) return "❌ No tienes permisos de administrador.";
-  return null;
-}
-
-function canalDeVoz(member) {
-  return member.voice?.channel ?? null;
-}
-
-async function limpiar(interaction, mensaje) {
-  setTimeout(async () => {
-    try {
-      await interaction.deleteReply();
-      if (mensaje) await mensaje.delete();
-    } catch {}
-  }, 20000);
-}
+const prefix = ">";
 
 client.once(Events.ClientReady, () => {
-  console.log(`✅ Bot conectado como ${client.user.tag}`);
+    console.log(`✅ Bot conectado como ${client.user.tag}`);
 });
 
-client.on(Events.MessageCreate, async (msg) => {
-  if (!msg.content.startsWith(">") || msg.author.bot) return;
+function validacionBasica(message) {
+    if (!message.guild) return "❌ Este comando no está disponible por mensaje directo.";
+    if (!message.member.permissions.has(PermissionFlagsBits.Administrator)) return "❌ No tienes permisos de administrador.";
+    return null;
+}
 
-  const comando = msg.content.slice(1).trim().toLowerCase();
-  const interaction = msg;
+function canalDeVoz(message) {
+    return message.member.voice?.channel ?? null;
+}
 
-  const error = validacionBasica(interaction);
-  if (error) {
-    const aviso = await msg.reply(error);
-    return limpiar(interaction, aviso);
-  }
-
-  const canal = canalDeVoz(interaction.member);
-  if (!canal) {
-    const aviso = await msg.reply("❌ Debes estar conectado a un canal de voz.");
-    return limpiar(interaction, aviso);
-  }
-
-  if (comando === "join") {
-    joinVoiceChannel({
-      channelId: canal.id,
-      guildId: canal.guild.id,
-      adapterCreator: canal.guild.voiceAdapterCreator
-    });
-    await msg.react("🔊");
-    return limpiar(interaction);
-  }
-
-  if (comando === "leave") {
-    if (!interaction.guild.members.me.voice.channel) {
-      const aviso = await msg.reply("❌ No estoy conectado a ningún canal de voz.");
-      return limpiar(interaction, aviso);
-    }
-    await interaction.guild.members.me.voice.disconnect();
-    await msg.react("👋");
-    return limpiar(interaction);
-  }
-
-  if (comando === "mutear") {
-    const autorRol = interaction.member.roles.highest;
-    for (const miembro of canal.members.values()) {
-      if (miembro.id === interaction.author.id) continue;
-      if (miembro.roles.highest.position < autorRol.position) {
+async function limpiar(message, replyMessage = null) {
+    setTimeout(async () => {
         try {
-          await miembro.voice.setMute(true);
+            await message.delete().catch(() => {});
+            if (replyMessage) await replyMessage.delete().catch(() => {});
         } catch {}
-      }
-    }
-    await msg.react("🔇");
-    return limpiar(interaction);
-  }
+    }, 20000);
+}
 
-  if (comando === "desmutear") {
-    for (const miembro of canal.members.values()) {
-      try {
-        await miembro.voice.setMute(false);
-      } catch {}
-    }
-    await msg.react("🔊");
-    return limpiar(interaction);
-  }
+client.on(Events.MessageCreate, async (message) => {
+    if (!message.content.startsWith(prefix) || message.author.bot) return;
 
-  if (comando === "ayuda" || comando === "help") {
-    const { EmbedBuilder } = await import("discord.js");
-    const embed = new EmbedBuilder()
-      .setTitle("🛠️ Comandos disponibles")
-      .setDescription("Este bot controla el audio en canales de voz.")
-      .addFields(
-        { name: "🔊 `>join`", value: "El bot se une al canal de voz." },
-        { name: "👋 `>leave`", value: "El bot se desconecta del canal de voz." },
-        { name: "🔇 `>mutear`", value: "Mutea a miembros con menor jerarquía." },
-        { name: "🔊 `>desmutear`", value: "Desmutea a todos los miembros." },
-        { name: "❓ `>ayuda` o `>help`", value: "Muestra esta ayuda." }
-      )
-      .setColor("Blue");
-    const enviado = await msg.reply({ embeds: [embed] });
-    return limpiar(interaction, enviado);
-  }
+    const args = message.content.slice(prefix.length).trim().split(/ +/);
+    const comando = args.shift().toLowerCase();
+
+    const canal = canalDeVoz(message);
+    const error = validacionBasica(message);
+
+    if (comando === "join") {
+        if (error) return limpiar(message, await message.reply(error));
+        if (!canal) return limpiar(message, await message.reply("❌ Debes estar en un canal de voz."));
+
+        try {
+            joinVoiceChannel({
+                channelId: canal.id,
+                guildId: canal.guild.id,
+                adapterCreator: canal.guild.voiceAdapterCreator
+            });
+        } catch (e) {
+            return limpiar(message, await message.reply("❌ No puedo unirme al canal."));
+        }
+
+        await message.react("🔊");
+        await limpiar(message);
+
+    } else if (comando === "leave") {
+        if (error) return limpiar(message, await message.reply(error));
+
+        const connection = getVoiceConnection(message.guild.id);
+        if (!connection) return limpiar(message, await message.reply("❌ No estoy conectado a ningún canal."));
+
+        try {
+            connection.destroy();
+            await message.react("👋");
+            await limpiar(message);
+        } catch {
+            await message.reply("❌ No puedo desconectarme.");
+        }
+
+    } else if (comando === "mutear") {
+        if (error) return limpiar(message, await message.reply(error));
+        if (!canal) return limpiar(message, await message.reply("❌ Debes estar en un canal de voz."));
+
+        const autorRol = message.member.roles.highest;
+        let fallos = 0;
+
+        for (const miembro of canal.members.values()) {
+            if (miembro.id === message.author.id) continue;
+            if (miembro.roles.highest.comparePositionTo(autorRol) < 0) {
+                try {
+                    await miembro.voice.setMute(true);
+                } catch {
+                    fallos++;
+                }
+            }
+        }
+
+        if (fallos > 0) await message.channel.send(`⚠️ No se pudo mutear a ${fallos} miembro(s).`);
+        await message.react("🔇");
+        await limpiar(message);
+
+    } else if (comando === "desmutear") {
+        if (error) return limpiar(message, await message.reply(error));
+        if (!canal) return limpiar(message, await message.reply("❌ Debes estar en un canal de voz."));
+
+        let fallos = 0;
+        for (const miembro of canal.members.values()) {
+            try {
+                await miembro.voice.setMute(false);
+            } catch {
+                fallos++;
+            }
+        }
+
+        if (fallos > 0) await message.channel.send(`⚠️ No se pudo desmutear a ${fallos} miembro(s).`);
+        await message.react("🔊");
+        await limpiar(message);
+
+    } else if (comando === "prioridad") {
+        if (error) return limpiar(message, await message.reply(error));
+        if (!canal) return limpiar(message, await message.reply("❌ Debes estar en un canal de voz."));
+        const mencionado = message.mentions.members.first();
+        if (!mencionado || !canal.members.has(mencionado.id)) {
+            return limpiar(message, await message.reply("❌ Debes mencionar a alguien que esté en el canal de voz."));
+        }
+
+        const autorRol = message.member.roles.highest;
+        let fallos = 0;
+
+        for (const miembro of canal.members.values()) {
+            if ([mencionado.id, message.author.id].includes(miembro.id)) continue;
+            if (miembro.roles.highest.comparePositionTo(autorRol) < 0) {
+                try {
+                    await miembro.voice.setMute(true);
+                } catch {
+                    fallos++;
+                }
+            }
+        }
+
+        await message.channel.send({
+            embeds: [{
+                title: "🎙️ Prioridad de Voz Activada",
+                description: `${mencionado} tiene la palabra.\nLos demás han sido silenciados.`,
+                color: 0xFFA500,
+                fields: fallos ? [{ name: "⚠️ Advertencia", value: `${fallos} miembros no pudieron ser silenciados.` }] : []
+            }]
+        });
+
+        await message.react("🎤");
+        await limpiar(message);
+
+    } else if (comando === "desprioridad") {
+        if (error) return limpiar(message, await message.reply(error));
+        if (!canal) return limpiar(message, await message.reply("❌ Debes estar en un canal de voz."));
+
+        let fallos = 0;
+        for (const miembro of canal.members.values()) {
+            try {
+                await miembro.voice.setMute(false);
+            } catch {
+                fallos++;
+            }
+        }
+
+        await message.channel.send({
+            embeds: [{
+                title: "🔊 Fin de Prioridad de Voz",
+                description: "Todos han sido desmuteados.",
+                color: 0x00FF00,
+                fields: fallos ? [{ name: "⚠️ Advertencia", value: `${fallos} miembros no fueron desmuteados.` }] : []
+            }]
+        });
+
+        await message.react("✅");
+        await limpiar(message);
+
+    } else if (["ayuda", "help"].includes(comando)) {
+        if (!message.guild) return limpiar(message, await message.reply("❌ No disponible por DM."));
+
+        await message.channel.send({
+            embeds: [{
+                title: "🛠️ Comandos disponibles",
+                description: "Control de voz por roles y administración.",
+                color: 0x3498DB,
+                fields: [
+                    { name: "🔊 `>join`", value: "El bot se une al canal de voz.", inline: false },
+                    { name: "👋 `>leave`", value: "El bot se desconecta del canal de voz.", inline: false },
+                    { name: "🔇 `>mutear`", value: "Silencia a miembros con menor rol.", inline: false },
+                    { name: "🔊 `>desmutear`", value: "Desmutea a todos los miembros.", inline: false },
+                    { name: "🎤 `>prioridad @usuario`", value: "Da la palabra a alguien silenciando al resto.", inline: false },
+                    { name: "✅ `>desprioridad`", value: "Desmutea a todos los miembros.", inline: false },
+                    { name: "❓ `>ayuda`", value: "Muestra esta ayuda.", inline: false }
+                ]
+            }]
+        });
+
+        await limpiar(message);
+    }
 });
 
-process.on("unhandledRejection", console.error);
 client.login(process.env.DISCORD_TOKEN);
